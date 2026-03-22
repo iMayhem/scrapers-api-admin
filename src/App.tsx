@@ -39,12 +39,17 @@ export default function App() {
 
   const loadConfig = async () => {
     setLoading(true);
+    setStatus(null);
     try {
       const data = await fetchConfig();
       setConfig(data);
-    } catch (err) {
-      console.error(err);
-      setStatus({ type: 'error', message: 'Failed to load configuration' });
+    } catch (err: unknown) {
+      console.error('Failed to load config:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load configuration';
+      setStatus({ 
+        type: 'error', 
+        message: errorMessage
+      });
     } finally {
       setLoading(false);
     }
@@ -93,7 +98,7 @@ export default function App() {
   };
 
   const filteredProviders = useMemo(() => {
-    if (!config) return [];
+    if (!config || !Array.isArray(config.providers)) return [];
     return config.providers.filter(
       (p) =>
         p.name.toLowerCase().includes(search.toLowerCase()) ||

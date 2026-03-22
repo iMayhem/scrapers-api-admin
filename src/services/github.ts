@@ -14,13 +14,32 @@ export interface Config {
 }
 
 export const fetchConfig = async (): Promise<Config> => {
-  const response = await axios.get(`https://api.github.com/gists/${GIST_ID}`, {
-    headers: {
-      Authorization: `token ${GITHUB_TOKEN}`,
-    },
-  });
-  const content = response.data.files['scrapers.json'].content;
-  return JSON.parse(content);
+  try {
+    const response = await axios.get(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: {
+        Authorization: `token ${GITHUB_TOKEN}`,
+      },
+    });
+    const content = response.data.files['scrapers.json'].content;
+    
+    // Robustly handle potential double-encoding
+    let data = JSON.parse(content);
+    if (typeof data === 'string') {
+      console.warn('Configuration data was double-encoded, parsing again...');
+      data = JSON.parse(data);
+    }
+    
+    if (!data || !Array.isArray(data.providers)) {
+      throw new Error('Invalid configuration format: Missing providers array');
+    }
+    
+    return data;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      throw new Error('Configuration not found. Please check your Gist ID and Token.');
+    }
+    throw err;
+  }
 };
 
 export const saveConfig = async (config: Config): Promise<void> => {
