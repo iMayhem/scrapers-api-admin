@@ -15,8 +15,16 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { Save, Search, RefreshCw, AlertCircle, CheckCircle2, GripVertical } from 'lucide-react';
-import { fetchConfig, saveConfig, type Config } from './services/github';
+import { Save, Search, RefreshCw, AlertCircle, CheckCircle2, GripVertical, Play, Settings2, Zap } from 'lucide-react';
+import {
+  fetchConfig,
+  saveConfig,
+  runLiveTest,
+  DEFAULT_PREFERENCES,
+  type Config,
+  type StreamResult,
+  type PrioritizeBy,
+} from './services/github';
 import { ScraperItem } from './components/ScraperItem';
 
 export default function App() {
@@ -25,6 +33,11 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showPreferences, setShowPreferences] = useState(false);
+  const [showLiveTest, setShowLiveTest] = useState(false);
+  const [testTmdbId, setTestTmdbId] = useState('155');
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState<{ streams: StreamResult[]; logs: string[] } | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -97,6 +110,56 @@ export default function App() {
     }
   };
 
+  const handleRunTest = async () => {
+    setTestRunning(true);
+    setTestResult(null);
+    setStatus(null);
+    try {
+      const result = await runLiveTest(testTmdbId);
+      setTestResult(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Live test failed';
+      setStatus({ type: 'error', message: msg });
+    } finally {
+      setTestRunning(false);
+    }
+  };
+
+  const updatePreferences = (updates: Partial<Config['preferences']>) => {
+    if (!config) return;
+    setConfig({
+      ...config,
+      preferences: {
+        ...(config.preferences ?? DEFAULT_PREFERENCES),
+        ...updates,
+      },
+    });
+  };
+
+  const providerStats = useMemo(() => {
+    if (!testResult?.streams.length) return null;
+    const byKey = new Map<string, { count: number; latencies: number[]; sizes: number[] }>();
+    for (const s of testResult.streams) {
+      const key = s.providerKey ?? 'unknown';
+      const cur = byKey.get(key) ?? { count: 0, latencies: [], sizes: [] };
+      cur.count += 1;
+      if (s.latencyMs != null) cur.latencies.push(s.latencyMs);
+      if (s.fileSizeGb != null) cur.sizes.push(s.fileSizeGb);
+      byKey.set(key, cur);
+    }
+    const out: Record<string, { count: number; avgLatency: number | null; maxSizeGb: number | null }> = {};
+    byKey.forEach((v, k) => {
+      out[k] = {
+        count: v.count,
+        avgLatency: v.latencies.length
+          ? Math.round(v.latencies.reduce((a, b) => a + b, 0) / v.latencies.length)
+          : null,
+        maxSizeGb: v.sizes.length ? Math.max(...v.sizes) : null,
+      };
+    });
+    return out;
+  }, [testResult]);
+
   const filteredProviders = useMemo(() => {
     if (!config || !Array.isArray(config.providers)) return [];
     return config.providers.filter(
@@ -127,7 +190,25 @@ export default function App() {
             <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-[0.2em] mt-0.5">Control Center for Moovie API</p>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowPreferences(!showPreferences)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all ${
+                showPreferences ? 'bg-primary/20 border-primary text-primary' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
+              }`}
+            >
+              <Settings2 size={18} />
+              <span className="text-sm font-medium">Preferences</span>
+            </button>
+            <button
+              onClick={() => setShowLiveTest(!showLiveTest)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all ${
+                showLiveTest ? 'bg-primary/20 border-primary text-primary' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
+              }`}
+            >
+              <Zap size={18} />
+              <span className="text-sm font-medium">Live Test</span>
+            </button>
             {status && (
               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm border ${
                 status.type === 'success' ? 'bg-green-500/10 border-green-500/50 text-green-500' : 'bg-red-500/10 border-red-500/50 text-red-500'
@@ -149,6 +230,135 @@ export default function App() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 pt-8">
+        {/* Preferences Panel */}
+        {showPreferences && config && (
+          <div className="mb-8 p-6 rounded-2xl bg-card border border-zinc-800">
+            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <Settings2 size={20} />
+              Stream preferences
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-zinc-400 mb-2">Prioritize by</label>
+                <select
+                  value={config.preferences?.prioritizeBy ?? 'latency'}
+                  onChange={(e) => updatePreferences({ prioritizeBy: e.target.value as PrioritizeBy })}
+                  className="w-full max-w-xs bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-primary/40"
+                >
+                  <option value="latency">Latency (fastest first)</option>
+                  <option value="size">Size (smaller first, avoid buffering)</option>
+                  <option value="balanced">Balanced (size limit, then latency)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-zinc-400 mb-2">Max preferred file size (GB) – deprioritize larger</label>
+                <input
+                  type="number"
+                  min={0.5}
+                  max={20}
+                  step={0.5}
+                  value={config.preferences?.maxPreferredSizeGb ?? 3}
+                  onChange={(e) => updatePreferences({ maxPreferredSizeGb: parseFloat(e.target.value) || 3 })}
+                  className="w-full max-w-xs bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Live Test Panel */}
+        {showLiveTest && (
+          <div className="mb-8 p-6 rounded-2xl bg-card border border-zinc-800">
+            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <Zap size={20} />
+              Live scrape test
+            </h2>
+            <div className="flex gap-3 mb-4">
+              <input
+                type="text"
+                placeholder="TMDB ID (e.g. 155 for The Dark Knight)"
+                value={testTmdbId}
+                onChange={(e) => setTestTmdbId(e.target.value)}
+                className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-white placeholder-zinc-600 focus:ring-2 focus:ring-primary/40"
+              />
+              <button
+                onClick={handleRunTest}
+                disabled={testRunning}
+                className="flex items-center gap-2 bg-primary hover:bg-accent disabled:opacity-50 px-6 py-2.5 rounded-xl font-bold text-white"
+              >
+                {testRunning ? <RefreshCw className="animate-spin" size={20} /> : <Play size={20} />}
+                {testRunning ? 'Testing...' : 'Run Test'}
+              </button>
+            </div>
+            {testResult && (
+              <div className="space-y-4">
+                <div className="flex gap-6 text-sm">
+                  <span className="text-green-500 font-medium">
+                    {testResult.streams.length} stream{testResult.streams.length !== 1 ? 's' : ''} found
+                  </span>
+                  {providerStats && (
+                    <span className="text-zinc-400">
+                      {Object.keys(providerStats).length} provider{Object.keys(providerStats).length !== 1 ? 's' : ''} working
+                    </span>
+                  )}
+                </div>
+                {providerStats && Object.keys(providerStats).length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {Object.entries(providerStats).map(([key, stats]) => (
+                      <div
+                        key={key}
+                        className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 text-sm"
+                      >
+                        <p className="font-mono font-medium text-primary truncate" title={key}>
+                          {key}
+                        </p>
+                        <p className="text-zinc-400 mt-0.5">
+                          {stats.count} stream{stats.count !== 1 ? 's' : ''}
+                          {stats.avgLatency != null && (
+                            <span className="text-green-400 ml-2">~{stats.avgLatency}ms</span>
+                          )}
+                          {stats.maxSizeGb != null && (
+                            <span className="text-zinc-500 ml-2">max {stats.maxSizeGb.toFixed(2)} GB</span>
+                          )}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-zinc-500 hover:text-zinc-400">
+                    View {testResult.streams.length} stream details
+                  </summary>
+                  <div className="mt-2 max-h-60 overflow-y-auto space-y-1.5 pr-2">
+                    {testResult.streams.slice(0, 50).map((s, i) => (
+                      <div
+                        key={i}
+                        className="p-2 rounded-lg bg-zinc-900/60 text-xs font-mono flex flex-wrap gap-x-4 gap-y-1"
+                      >
+                        <span className="text-white truncate max-w-[200px]" title={s.server}>
+                          {s.server}
+                        </span>
+                        {s.latencyMs != null && (
+                          <span className="text-green-400">{s.latencyMs}ms</span>
+                        )}
+                        {s.fileSizeGb != null && (
+                          <span className="text-blue-400">{s.fileSizeGb.toFixed(2)} GB</span>
+                        )}
+                        {s.providerKey && (
+                          <span className="text-zinc-500">{s.providerKey}</span>
+                        )}
+                      </div>
+                    ))}
+                    {testResult.streams.length > 50 && (
+                      <p className="text-zinc-500 py-2">… and {testResult.streams.length - 50} more</p>
+                    )}
+                  </div>
+                </details>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Search Bar */}
         <div className="relative mb-8 group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500 group-focus-within:text-primary transition-colors" size={20} />
@@ -178,6 +388,7 @@ export default function App() {
                   key={scraper.key}
                   scraper={scraper}
                   onToggle={toggleScraper}
+                  stats={providerStats?.[scraper.key]}
                 />
               ))}
               {filteredProviders.length === 0 && (

@@ -9,9 +9,32 @@ export interface Scraper {
   enabled: boolean;
 }
 
+export type PrioritizeBy = 'latency' | 'size' | 'balanced';
+
+export interface ScraperPreferences {
+  prioritizeBy: PrioritizeBy;
+  maxPreferredSizeGb: number;
+}
+
 export interface Config {
   providers: Scraper[];
+  preferences?: ScraperPreferences;
 }
+
+export interface StreamResult {
+  server: string;
+  url: string;
+  type: string;
+  quality: string;
+  latencyMs?: number;
+  fileSizeGb?: number;
+  providerKey?: string;
+}
+
+const DEFAULT_PREFERENCES: ScraperPreferences = {
+  prioritizeBy: 'latency',
+  maxPreferredSizeGb: 3,
+};
 
 export const fetchConfig = async (): Promise<Config> => {
   try {
@@ -43,12 +66,16 @@ export const fetchConfig = async (): Promise<Config> => {
 };
 
 export const saveConfig = async (config: Config): Promise<void> => {
+  const toSave: Config = {
+    providers: config.providers,
+    preferences: config.preferences ?? DEFAULT_PREFERENCES,
+  };
   await axios.patch(
     `https://api.github.com/gists/${GIST_ID}`,
     {
       files: {
         'scrapers.json': {
-          content: JSON.stringify(config, null, 2),
+          content: JSON.stringify(toSave, null, 2),
         },
       },
     },
@@ -59,3 +86,63 @@ export const saveConfig = async (config: Config): Promise<void> => {
     }
   );
 };
+
+const SCRAPER_URL =
+  import.meta.env.VITE_SCRAPER_URL || 'https://scrapers-api.onrender.com';
+
+export const runLiveTest = async (
+  tmdbId: string
+): Promise<{ streams: StreamResult[]; logs: string[] }> => {
+  const streams: StreamResult[] = [];
+  const logs: string[] = [];
+  const url = `${SCRAPER_URL}/api/scrape?tmdbId=${tmdbId}&stream=true`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Scrape failed: ${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No response body');
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (event.msgType === 'log') {
+          logs.push(event.message);
+        } else if (event.msgType === 'stream') {
+          delete event.msgType;
+          streams.push(event);
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      const event = JSON.parse(buffer);
+      if (event.msgType === 'stream') {
+        delete event.msgType;
+        streams.push(event);
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  return { streams, logs };
+};
+
+export { DEFAULT_PREFERENCES };

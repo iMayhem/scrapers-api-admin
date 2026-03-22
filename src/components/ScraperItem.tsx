@@ -10,12 +10,19 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+interface ProviderStats {
+  count: number;
+  avgLatency: number | null;
+  maxSizeGb: number | null;
+}
+
 interface Props {
   scraper: Scraper;
   onToggle: (key: string) => void;
+  stats?: ProviderStats | null;
 }
 
-export const ScraperItem: React.FC<Props> = ({ scraper, onToggle }) => {
+export const ScraperItem: React.FC<Props> = ({ scraper, onToggle, stats }) => {
   const {
     attributes,
     listeners,
@@ -51,10 +58,16 @@ export const ScraperItem: React.FC<Props> = ({ scraper, onToggle }) => {
       </button>
 
       <div className="flex-grow">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-semibold text-white tracking-tight">{scraper.name}</span>
           {!scraper.enabled && (
-             <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">Disabled</span>
+            <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500">Disabled</span>
+          )}
+          {stats && stats.count > 0 && (
+            <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">
+              {stats.count} stream{stats.count !== 1 ? 's' : ''}
+              {stats.avgLatency != null && ` · ~${stats.avgLatency}ms`}
+            </span>
           )}
         </div>
         <p className="text-xs text-zinc-500 font-mono mt-0.5">{scraper.key}</p>
