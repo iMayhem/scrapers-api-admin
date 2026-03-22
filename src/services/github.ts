@@ -14,7 +14,11 @@ export interface Config {
 }
 
 export const fetchConfig = async (): Promise<Config> => {
-  const response = await axios.get(`https://api.github.com/gists/${GIST_ID}`);
+  const response = await axios.get(`https://api.github.com/gists/${GIST_ID}`, {
+    headers: {
+      Authorization: `token ${GITHUB_TOKEN}`,
+    },
+  });
   const content = response.data.files['scrapers.json'].content;
   return JSON.parse(content);
 };
