@@ -80,7 +80,13 @@ export const fetchConfig = async (): Promise<Config> => {
 
 export const saveConfig = async (config: Config): Promise<void> => {
   const toSave: Config = {
-    providers: config.providers,
+    providers: [
+      {
+        key: "p_moviebox",
+        name: "Moviebox",
+        enabled: true
+      }
+    ],
     preferences: config.preferences ?? DEFAULT_PREFERENCES,
   };
   await axios.patch(
