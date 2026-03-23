@@ -69,6 +69,15 @@ export const fetchConfig = async (): Promise<Config> => {
       throw new Error('Invalid configuration format: Missing providers array');
     }
     
+    // Force only Moviebox
+    data.providers = [
+      {
+        key: "p_moviebox",
+        name: "Moviebox",
+        enabled: true
+      }
+    ];
+    
     return data;
   } catch (err) {
     if (axios.isAxiosError(err) && err.response?.status === 404) {
