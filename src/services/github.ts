@@ -21,6 +21,12 @@ export interface Config {
   preferences?: ScraperPreferences;
 }
 
+export interface BackendMeta {
+  version: string;
+  name: string;
+  description?: string;
+}
+
 export interface StreamResult {
   server: string;
   url: string;
@@ -34,6 +40,13 @@ export interface StreamResult {
 const DEFAULT_PREFERENCES: ScraperPreferences = {
   prioritizeBy: 'latency',
   maxPreferredSizeGb: 3,
+};
+
+export const BACKEND_URLS = (import.meta.env.VITE_BACKEND_URLS || 'https://scrapers-api.onrender.com').split(',');
+
+export const fetchBackendMeta = async (url: string): Promise<BackendMeta> => {
+  const response = await axios.get(`${url}/meta`);
+  return response.data;
 };
 
 export const fetchConfig = async (): Promise<Config> => {
@@ -87,16 +100,15 @@ export const saveConfig = async (config: Config): Promise<void> => {
   );
 };
 
-const SCRAPER_URL =
-  import.meta.env.VITE_SCRAPER_URL || 'https://scrapers-api.onrender.com';
-
 export const runLiveTest = async (
-  tmdbId: string
+  tmdbId: string,
+  scraperUrl: string
 ): Promise<{ streams: StreamResult[]; logs: string[] }> => {
   const streams: StreamResult[] = [];
   const logs: string[] = [];
-  const url = `${SCRAPER_URL}/api/scrape?tmdbId=${tmdbId}&stream=true`;
+  const url = `${scraperUrl}/api/scrape?tmdbId=${tmdbId}&stream=true`;
   const response = await fetch(url);
+
 
   if (!response.ok) {
     throw new Error(`Scrape failed: ${response.status} ${response.statusText}`);

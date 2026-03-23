@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -20,10 +20,13 @@ import {
   fetchConfig,
   saveConfig,
   runLiveTest,
+  fetchBackendMeta,
+  BACKEND_URLS,
   DEFAULT_PREFERENCES,
   type Config,
   type StreamResult,
   type PrioritizeBy,
+  type BackendMeta,
 } from './services/github';
 import { ScraperItem } from './components/ScraperItem';
 
@@ -35,9 +38,12 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showPreferences, setShowPreferences] = useState(false);
   const [showLiveTest, setShowLiveTest] = useState(false);
+  const [showServers, setShowServers] = useState(false);
   const [testTmdbId, setTestTmdbId] = useState('155');
   const [testRunning, setTestRunning] = useState(false);
   const [testResult, setTestResult] = useState<{ streams: StreamResult[]; logs: string[] } | null>(null);
+  const [selectedBackend, setSelectedBackend] = useState(BACKEND_URLS[0]);
+  const [backendStatuses, setBackendStatuses] = useState<Record<string, { meta: BackendMeta | null; latency?: number; loading: boolean; error?: string }>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -46,9 +52,41 @@ export default function App() {
     })
   );
 
+  const testAllBackends = useCallback(async () => {
+    const initial: typeof backendStatuses = {};
+    BACKEND_URLS.forEach((url: string) => {
+      initial[url] = { meta: null, loading: true };
+    });
+    setBackendStatuses(initial);
+
+    BACKEND_URLS.forEach(async (url: string) => {
+      const start = performance.now();
+      try {
+        const meta = await fetchBackendMeta(url);
+        const end = performance.now();
+        setBackendStatuses((prev) => ({
+          ...prev,
+          [url]: { meta, latency: Math.round(end - start), loading: false },
+        }));
+      } catch (err: unknown) {
+        setBackendStatuses((prev) => ({
+          ...prev,
+          [url]: {
+            meta: null,
+            loading: false,
+            error: err instanceof Error ? err.message : "Failed",
+          },
+        }));
+      }
+    });
+  }, []);
+
   useEffect(() => {
     loadConfig();
-  }, []);
+    testAllBackends();
+  }, [testAllBackends]);
+
+
 
   const loadConfig = async () => {
     setLoading(true);
@@ -115,7 +153,7 @@ export default function App() {
     setTestResult(null);
     setStatus(null);
     try {
-      const result = await runLiveTest(testTmdbId);
+      const result = await runLiveTest(testTmdbId, selectedBackend);
       setTestResult(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Live test failed';
@@ -192,6 +230,15 @@ export default function App() {
           
           <div className="flex items-center gap-2 flex-wrap">
             <button
+              onClick={() => setShowServers(!showServers)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all ${
+                showServers ? 'bg-primary/20 border-primary text-primary' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
+              }`}
+            >
+              <Settings2 size={18} />
+              <span className="text-sm font-medium">Servers</span>
+            </button>
+            <button
               onClick={() => setShowPreferences(!showPreferences)}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl border transition-all ${
                 showPreferences ? 'bg-primary/20 border-primary text-primary' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
@@ -230,9 +277,74 @@ export default function App() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 pt-8">
+        {/* Servers Panel */}
+        {showServers && (
+          <div className="mb-8 p-6 rounded-2xl bg-card border border-zinc-800 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Settings2 size={20} className="text-primary" />
+                Backend servers
+              </h2>
+              <button 
+                onClick={testAllBackends}
+                className="text-xs text-zinc-500 hover:text-white flex items-center gap-1 transition-colors"
+              >
+                <RefreshCw size={12} />
+                Refresh all
+              </button>
+            </div>
+            <div className="grid gap-3">
+              {BACKEND_URLS.map((url: string) => {
+                const s = backendStatuses[url];
+
+                const isSelected = selectedBackend === url;
+                return (
+                  <button
+                    key={url}
+                    onClick={() => setSelectedBackend(url)}
+                    className={`flex items-center justify-between p-4 rounded-xl border transition-all text-left ${
+                      isSelected ? 'bg-primary/5 border-primary shadow-[0_0_15px_rgba(var(--primary-rgb),0.1)]' : 'bg-zinc-900/50 border-zinc-800 hover:border-zinc-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <div className={`w-2 h-2 rounded-full ${
+                        s?.loading ? 'bg-zinc-600 animate-pulse' : s?.meta ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'
+                      }`} />
+                      <div className="overflow-hidden">
+                        <p className={`font-medium truncate ${isSelected ? 'text-white' : 'text-zinc-300'}`}>
+                          {s?.meta?.name || new URL(url).hostname}
+                        </p>
+                        <p className="text-[10px] text-zinc-500 truncate font-mono">{url}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 flex-shrink-0 ml-4">
+                      {s?.latency && (
+                        <span className={`text-xs font-mono font-medium ${
+                          s.latency < 200 ? 'text-green-400' : s.latency < 500 ? 'text-yellow-400' : 'text-red-400'
+                        }`}>
+                          {s.latency}ms
+                        </span>
+                      )}
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                        isSelected ? 'border-primary bg-primary' : 'border-zinc-700'
+                      }`}>
+                        {isSelected && <CheckCircle2 size={12} className="text-white" />}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-4 text-[11px] text-zinc-500 italic">
+              Selected server will be used for Live Test and scraping operations.
+            </p>
+          </div>
+        )}
+
         {/* Preferences Panel */}
         {showPreferences && config && (
-          <div className="mb-8 p-6 rounded-2xl bg-card border border-zinc-800">
+          <div className="mb-8 p-6 rounded-2xl bg-card border border-zinc-800 animate-in fade-in slide-in-from-top-4 duration-300">
+
             <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
               <Settings2 size={20} />
               Stream preferences
